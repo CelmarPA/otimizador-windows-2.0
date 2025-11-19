@@ -1,12 +1,13 @@
 from PIL import Image, ImageTk, ImageDraw
 import tkinter as tk
-from tkinter import messagebox, PhotoImage
 import webbrowser
+from system_actions import SystemActions
+from log_panel import LogPanel
 
 
 class Window:
-    
-    def __init__(self, width: int = 600, height: int = 780) -> None:
+
+    def __init__(self, width: int = 1200, height: int = 700) -> None:
         """
         Initializes the main window of the System Optimizer.
 
@@ -40,9 +41,20 @@ class Window:
         self.container = tk.Frame(inner_shadow, bg="#ffffff", bd=0, relief=tk.FLAT)
         self.container.pack(pady=0, padx=0, fill=tk.BOTH, expand=True)
 
+        # Side panel logs
+        self.log_panel = LogPanel(self.container)
+        self.log_panel.frame.grid(row=0, column=1, sticky="ns")
+
+        # System actions using the logs panel
+        self.actions = SystemActions(self.log_panel)
+
+        # Create layout in columns within card
+        self.container.grid_columnconfigure(0, weight=1)
+        self.container.grid_columnconfigure(1, weight=1)
+
         # Frame buttons
         self.button_frame = tk.Frame(self.container, bg="#ffffff")
-        self.button_frame.pack(pady=20, padx=30, fill=tk.BOTH, expand=True)
+        self.button_frame.grid(row=0, column=0, sticky="nsew", padx=(30, 10), pady=20)
 
         # Create the main menu buttons.
         self.create_buttons()
@@ -91,15 +103,15 @@ class Window:
 
         # List of buttons: (Button text, function called)
         buttons = [
-            ("PC Performance Test", self.pc_performance_test, "#ff6b6b"),  # Red
-            ("Disable SysMain", self.disable_sysmain, "#f5a623"),  # Orange
-            ("Clean Temporary Files", self.clean_temporary_files, "#32cd32"),  # Green
-            ("Enable High Performance Power Plan", self.enable_high_power_performance, "#007bff"),  # Blue
-            ("Disable Background Apps", self.disable_background_apps, "#8e44ad"),  # Purple
-            ("Enable Background Apps", self.enable_background_apps, "#20b2aa"),  # Teal
-            ("Complete Optimization", self.complete_optimization, "#2c3e50"),  # Navy gray
-            ("Update All Software", self.update_software, "#009688"),  # Cyan
-            ("Windows / Office Activator / Repair", self.massgrave_activator, "#34495e")  # Dark gray
+            ("PC Performance Test", self.actions.pc_performance_test, "#ff6b6b"),  # Red
+            ("Create Restore Point", self.actions.create_restore_point, "#34495e"), # Dark gray
+            ("Disable SysMain", self.actions.disable_sysmain, "#f5a623"),  # Orange
+            ("Clean Temporary Files", self.actions.clean_temporary_files, "#32cd32"),  # Green
+            ("Enable High Performance Power Plan", self.actions.enable_high_power_plan, "#007bff"),  # Blue
+            ("Disable Background Apps", self.actions.disable_background_apps, "#8e44ad"),  # Purple
+            ("Complete Optimization", self.actions.complete_optimization, "#2c3e50"),  # Navy gray
+            ("Update All Software", self.actions.update_software, "#009688"),  # Cyan
+            ("Windows / Office Activator / Repair", self.actions.massgrave_activator, "#34495e")  # Dark gray
         ]
 
         # Loop to create and add each button
@@ -108,7 +120,6 @@ class Window:
                 self.button_frame,
                 text=text,
                 command=command,
-                height=2,
                 bg=color,
                 fg="white",
                 font=("Segoe UI", 10, "bold"),
@@ -196,28 +207,20 @@ class Window:
 
         img = Image.open(path).resize(size, Image.Resampling.LANCZOS).convert("RGBA")
 
-        # Criar máscara arredondada
         mask = Image.new("L", img.size, 0)
         draw = ImageDraw.Draw(mask)
         draw.rounded_rectangle((0, 0, *img.size), radius=radius, fill=255)
 
-        # Criar background do mesmo tamanho
-        background = Image.new("RGBA", img.size)
-        background.paste(img, (0, 0), mask=mask)  # aplica a máscara no paste
+        img.putalpha(mask)
 
-        return ImageTk.PhotoImage(background)  # <- retorna o background, não img
+        return ImageTk.PhotoImage(img)
 
     def on_enter(self, event: tk.Event) -> None:
         color = event.widget.original_bg
-        darker = self.darken_color(color)
-        event.widget["background"] = darker
-        event.widget.config(font=("Segoe UI", 11, "bold"))
-        event.widget.after(10, lambda: event.widget.config(height=3))
+        event.widget.config(background=self.darken_color(color), font=("Segoe UI", 11, "bold"))
 
     def on_leave(self, event: tk.Event) -> None:
-        event.widget["background"] = event.widget.original_bg
-        event.widget.config(font=("Segoe UI", 10, "bold"))
-        event.widget.after(10, lambda: event.widget.config(height=2))
+        event.widget.config(background=event.widget.original_bg, font=("Segoe UI", 10, "bold"))
 
     def darken_color(self, hex_color: str, factor: float = 0.8) -> str:
         """
@@ -237,46 +240,8 @@ class Window:
 
         return "#%02x%02x%02x" % darker_rgb
 
-    def pc_performance_test(self):
-        messagebox.showinfo(title="Performance Test", message="Running Performance Test...")
-        return None
-
-    def disable_sysmain(self):
-        messagebox.showinfo("Disable SysMain", "Disabling SysMain...")
-        return None
-
-    def disable_winsat(self):
-        messagebox.showinfo("Disable WinSAT", "Disabling WinSAT...")
-        return None
-
-    def enable_high_power_performance(self):
-        messagebox.showinfo("Enable High Performance", "Setting Power Plan to High Performance...")
-        return None
-
-    def clean_temporary_files(self):
-        messagebox.showinfo("Clean Temporary Files", "Cleaning Temporary Files...")
-        return None
-
-    def disable_background_apps(self):
-        messagebox.showinfo("Disable Background Apps", "Disabling Background Apps...")
-        return None
-
-    def enable_background_apps(self):
-        messagebox.showinfo("Enable Background Apps", "Enabling Background Apps...")
-        return None
-
-    def complete_optimization(self):
-        messagebox.showinfo("Full Optimization", "Performing Full Optimization...")
-        return None
-
-    def update_software(self):
-        messagebox.showinfo("Update All Software", "Updating All Software...")
-        return None
-
-    def massgrave_activator(self):
-        messagebox.showinfo("Activator / Troubleshoot", "Massgrave Activator...")
-        return None
-
+    def run_action(self, func, label):
+        func()
 
 
 window = Window()
