@@ -5,6 +5,7 @@ from system_actions import SystemActions
 from log_panel import LogPanel
 
 
+
 class Window:
 
     def __init__(self, width: int = 1200, height: int = 700) -> None:
@@ -105,8 +106,9 @@ class Window:
         buttons = [
             ("PC Performance Test", self.actions.pc_performance_test, "#ff6b6b"),  # Red
             ("Create Restore Point", self.actions.create_restore_point, "#34495e"), # Dark gray
-            ("Disable SysMain", self.actions.disable_sysmain, "#f5a623"),  # Orange
+            ("Enable / Disable SysMain", self.actions.enable_disable_sysmain, "#f5a623"),  # Orange
             ("Clean Temporary Files", self.actions.clean_temporary_files, "#32cd32"),  # Green
+            ("Deep Cleaning", self.actions.start_cleanup, "#4b0082"),  # Green
             ("Enable High Performance Power Plan", self.actions.enable_high_power_plan, "#007bff"),  # Blue
             ("Disable Background Apps", self.actions.disable_background_apps, "#8e44ad"),  # Purple
             ("Complete Optimization", self.actions.complete_optimization, "#2c3e50"),  # Navy gray
