@@ -1,3 +1,4 @@
+# system_actions.py
 import shutil
 import webbrowser
 import os
@@ -5,8 +6,10 @@ import subprocess
 import threading
 from datetime import datetime
 from performance_tester import PerformanceTester
-from tkinter import messagebox
 
+
+def _timestamp() -> str:
+    return datetime.now().strftime("%H:%M:%S")
 
 
 def auto_log(func):
@@ -34,9 +37,99 @@ class SystemActions:
 
     def __init__(self, log_panel=None) -> None:
         self.log_panel = log_panel
-        self.bench = PerformanceTester(log_panel=log_panel)
+        self.bench = PerformanceTester(log_panel)
 
-    @auto_log
+
+    def _log (self, level: str, msg: str) -> None:
+        if self.log_panel:
+            if level == "info":
+                self.log_panel.info(msg)
+            elif level == "success":
+                self.log_panel.success(msg)
+            elif level == "error":
+                self.log_panel.error(msg)
+            elif level == "warning":
+                self.log_panel.warning(msg)
+
+        else:
+            print(f"[{level.upper()}] {msg}")
+
+    def _check_service_status(self, service_name: str) -> str:
+        """Return 'running' or 'stopped' or '' on error."""
+
+        try:
+            proc = subprocess.run(
+                f'powershell -Command "(Get-Service -Name {service_name}).Status"',
+                capture_output=True, text=True, shell=True
+            )
+
+            return proc.stdout.strip().lower()
+
+        except Exception as e:
+            self._log("error", f"[{_timestamp()}] Error checking {service_name} status: {e}")
+            return ""
+
+    def toggle_service_async(self, service_name: str, action: str, *,
+                             on_start=None, on_finish=None, on_error=None) -> threading.Thread:
+        """
+        Toggle a service (enable/disable) without freezing the UI.
+        Calls:
+            on_start()
+            on_finish(success: bool, stderr: str)
+            on_error(exception)
+        """
+
+        def worker():
+            try:
+                # Event: start
+                if on_start:
+                    try:
+                        on_start()
+                    except Exception:
+                        pass
+
+                # Build command
+                if action == "disable":
+                    cmd = (
+                        'powershell -Command '
+                        f'"Stop-Service {service_name} -Force; '
+                        f' Set-Service {service_name} -StartupType Disabled"'
+                    )
+                else:
+                    cmd = (
+                        'powershell -Command '
+                        f'"Set-Service {service_name} -StartupType Automatic; '
+                        f' Start-Service {service_name}"'
+                    )
+
+                # Execute
+                proc = subprocess.run(cmd, capture_output=True, text=True, shell=True)
+
+                success = proc.returncode == 0
+                stderr = proc.stderr.strip()
+
+                if on_finish:
+                    try:
+                        on_finish(success, stderr)
+                    except Exception:
+                        pass
+
+                return
+
+            except Exception as e:
+                self._log("error", f"[{_timestamp()}] Worker exception: {e}")
+
+                if on_error:
+                    try:
+                        on_error(e)
+                    except Exception:
+                        pass
+
+        th = threading.Thread(target=worker, daemon=True)
+        th.start()
+
+        return th
+
     def create_restore_point(self) -> None:
         description = "Before Optimization"
         self.log_panel.info("Starting restore point creation...")
@@ -54,98 +147,6 @@ class SystemActions:
     @auto_log
     def pc_performance_test(self):
         self.bench.run_all(async_run=True)
-
-    @auto_log
-    def enable_disable_sysmain(self) -> None:
-        """
-        Toggle SysMain (user-friendly + non-blocking + safe):
-        - If running → ask to disable
-        - If stopped → ask to enable
-        """
-        # Check current state
-        try:
-            result = subprocess.run(
-                'powershell -Command "(Get-Service -Name SysMain).Status"',
-                capture_output=True, text=True, shell=True
-            )
-
-            status = result.stdout.strip().lower()
-
-        except Exception as e:
-            self.log_panel.error(f"❌ Error checking SysMain state: {e}")
-            return
-
-        # Ask user confirmation
-
-
-
-        if status.lower() == "running":
-            action = "disable"
-            ask_title = "Disable SysMain"
-            ask_message = "SysMain is ACTIVE. Do you want to deactivate it?"
-
-        else:
-            action = "enable"
-            ask_title = "Enable SysMain"
-            ask_message = "SysMain is DISABLED. Do you want to enable it?"
-
-        answer = messagebox.askyesno(ask_title, ask_message)
-
-        if not answer:
-            self.log_panel.info("Operation canceled by the user.")
-            return
-
-        # Run in background
-        def worker_toggle() -> None:
-            """Background task — prevents UI freeze"""
-
-            try:
-                if action == "disable":
-                    cmd = (
-                        'powershell -Command '
-                        '"Stop-Service SysMain -Force; '
-                        ' Set-Service SysMain -StartupType Disabled"'
-                    )
-
-                else:
-                    cmd = (
-                        'powershell -Command '
-                        '"Set-Service SysMain -StartupType Automatic; '
-                        ' Start-Service SysMain"'
-                    )
-
-                proc = subprocess.run(
-                    cmd, shell=True, capture_output=True, text=True
-                )
-
-                if proc.returncode != 0:
-                    self.log_panel.error(
-                        f"❌ Error executing SysMain ({action}): {proc.stderr.strip()}"
-                    )
-                    return
-
-                # Verify the result
-                verify = subprocess.run(
-                    'powershell -Command "(Get-Service -Name SysMain).Status"',
-                    capture_output=True, text=True, shell=True
-                )
-
-                new_status = verify.stdout.strip().lower()
-
-                if action == "disable" and new_status == "stopped":
-                    self.log_panel.success("✅ SysMain was successfully DISABLED!")
-
-                elif action == "enable" and new_status == "running":
-                    self.log_panel.success("✅ SysMain was successfully activated!")
-
-                else:
-                    self.log_panel.error("⚠️ Command executed, but the final state does not match.")
-
-            except Exception as e:
-                self.log_panel.error(f"❌ Exception during SysMain toggle: {e}")
-
-        # Start background thread
-        threading.Thread(target=worker_toggle, daemon=True).start()
 
     @auto_log
     def clean_temporary_files(self) -> None:

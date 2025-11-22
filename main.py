@@ -1,3 +1,6 @@
+import time
+from tkinter import ttk
+from tkinter import messagebox
 from PIL import Image, ImageTk, ImageDraw
 import tkinter as tk
 import webbrowser
@@ -5,10 +8,9 @@ from system_actions import SystemActions
 from log_panel import LogPanel
 
 
-
 class Window:
 
-    def __init__(self, width: int = 1200, height: int = 700) -> None:
+    def __init__(self, width: int = 1200, height: int = 850) -> None:
         """
         Initializes the main window of the System Optimizer.
 
@@ -106,13 +108,17 @@ class Window:
         buttons = [
             ("PC Performance Test", self.actions.pc_performance_test, "#ff6b6b"),  # Red
             ("Create Restore Point", self.actions.create_restore_point, "#34495e"), # Dark gray
-            ("Enable / Disable SysMain", self.actions.enable_disable_sysmain, "#f5a623"),  # Orange
+            ("Enable / Disable SysMain", lambda: self.toggle_service_with_overlay("SysMain", "SysMain / SuperFetch"), "#f5a623"),  # Orange
             ("Clean Temporary Files", self.actions.clean_temporary_files, "#32cd32"),  # Green
             ("Deep Cleaning", self.actions.start_cleanup, "#4b0082"),  # Green
             ("Enable High Performance Power Plan", self.actions.enable_high_power_plan, "#007bff"),  # Blue
             ("Disable Background Apps", self.actions.disable_background_apps, "#8e44ad"),  # Purple
             ("Complete Optimization", self.actions.complete_optimization, "#2c3e50"),  # Navy gray
             ("Update All Software", self.actions.update_software, "#009688"),  # Cyan
+            ("Enable / Disable Windows Update", lambda: self.toggle_service_with_overlay("wuauserv", "Windows Update Service"), "#2980b9"),
+            ("Enable / Disable BITS", lambda: self.toggle_service_with_overlay("bits", "Background Intelligent Transfer Service"), "#9b59b6"),
+            ("Enable / Disable Print Spooler", lambda: self.toggle_service_with_overlay("spooler", "Print Spooler"), "#e67e22"),
+            ("Enable / Disable Windows Search", lambda: self.toggle_service_with_overlay("wsearch", "Windows Search Indexing"), "#16a085"),
             ("Windows / Office Activator / Repair", self.actions.massgrave_activator, "#34495e")  # Dark gray
         ]
 
@@ -244,6 +250,244 @@ class Window:
 
     def run_action(self, func, label):
         func()
+
+    # Integration helper in main window class
+    # Inside your Window class (or wherever you create buttons), add a method like this:
+    def toggle_service_with_overlay(self, service_name: str, friendly_name: str) -> None:
+        """
+        Full flow:
+        - Show explanation modal
+        - Detect current state
+        - Show overlay
+        - Call backend async toggle
+        - Update logs + UI
+        """
+
+        # Explanation
+        proceed = show_service_info(self.root, service_name, friendly_name)
+
+        if not proceed:
+            if self.log_panel:
+                self.log_panel.info("User cancelled service operation.")
+
+            return
+
+        # Check state quickly
+        status = self.actions._check_service_status(service_name)  # uses backend helper
+
+        if status == "running":
+            action = "disable"
+            verb = "Disabling"
+
+        else:
+            action = "enable"
+            verb = "Enabling"
+
+        # Overlay
+        overlay = ProgressOverlay(
+            self.root,
+            title=f"{verb} {friendly_name}...",
+            message=f"{verb} {friendly_name}. Please wait."
+        )
+
+        if self.log_panel:
+            self.log_panel.info(f"▶️ {verb} {friendly_name}...")
+
+        # Callbacks
+        def on_start() -> None:
+            overlay.update_status(f"{verb}...")
+
+        def on_finish(success, stderr) -> None:
+            try:
+                if success:
+                    overlay.update_status("Done!")
+                    time.sleep(0.6)
+                    overlay.close()
+
+                    if self.log_panel:
+                        self.log_panel.success(f"{friendly_name} {action}d successfully.")
+
+                    messagebox.showinfo("Success", f"{friendly_name} updated successfully.")
+
+                else:
+                    overlay.update_status("Failed")
+                    time.sleep(0.6)
+                    overlay.close()
+                    if self.log_panel:
+                        self.log_panel.error(f"{friendly_name} toggle failed: {stderr}")
+
+                    messagebox.showerror("Error", f"Operation failed:\n{stderr}")
+
+
+            except Exception as e:
+                overlay.close()
+                self.log_panel.error(f"Finish callback exception: {e}")
+
+        def on_error(exc):
+            overlay.update_status("Error")
+            time.sleep(0.5)
+            overlay.close()
+
+            if self.log_panel:
+                self.log_panel.error(f"Exception: {exc}")
+
+            messagebox.showerror("Error", f"Exception: {exc}")
+
+        # Run async task from system_actions.py
+        self.actions.toggle_service_async(
+            service_name=service_name,
+            action=action,
+            on_start=on_start,
+            on_finish=on_finish,
+            on_error=on_error
+        )
+
+
+class ProgressOverlay:
+
+    def __init__(self,  parent: tk.Tk, title: str = "Working...", message: str = "") -> None:
+        self.parent = parent
+
+        # create a top-level full-screen overlay on top of parent window
+        self.win = tk.Toplevel(parent)
+        self.win.transient(parent)
+        self.win.overrideredirect(True)  # remove borders
+
+        # make it cover the parent window exactly
+        px = parent.winfo_rootx()
+        py = parent.winfo_rooty()
+        pw = parent.winfo_width()
+        ph = parent.winfo_height()
+
+        # ensure geometry updated
+        parent.update_idletasks()
+        self.win.geometry(f"{pw}x{ph}+{px}+{py}")
+
+        # semi-transparent dark background
+        self.bg = tk.Frame(self.win, bg="#000000")
+        self.bg.place(relwidth=1.0, relheight=1.0)
+
+        try:
+            self.win.attributes("-alpha", 0.55)
+
+        except Exception:
+            # some platforms may not accept alpha on Toplevel
+            pass
+
+        # central card
+        card_w, card_h = 420, 140
+        cx = (pw - card_w) // 2
+        cy = (ph - card_h) // 2
+        self.card = tk.Frame(self.win, bg="#ffffff", bd=2, relief="raised")
+        self.card.place(x=cx, y=cy, width=card_w, height=card_h)
+
+        self.title_lbl = tk.Label(self.card, text=title, font=("Segoe UI", 12, "bold"), bg="#ffffff")
+        self.title_lbl.pack(pady=(12, 6))
+
+        self.msg_lbl = tk.Label(self.card, text=message, font=("Segoe UI", 10), bg="#ffffff", wraplength=380,
+                                justify="center")
+        self.msg_lbl.pack(pady=(0, 8))
+
+        # Progress bar
+        self.pb = ttk.Progressbar(self.card, mode="indeterminate", length=320)
+        self.pb.pack(pady=(4, 8))
+        self.pb.start()
+
+        # Status
+        self.status_lbl = tk.Label(self.card, text="Starting...", font=("Segoe UI", 9), bg="#ffffff")
+        self.status_lbl.pack()
+
+        # Allow manual close? no, hide window close
+        self.win.protocol("WM_DELETE_WINDOW", lambda: None)
+
+    def update_status(self, text: str) -> None:
+        self.status_lbl.config(text=text)
+
+        # Ensure new text is visible
+        self.win.update_idletasks()
+
+    def close(self):
+        try:
+            self.pb.stop()
+        except Exception:
+            pass
+
+        try:
+            self.win.destroy()
+        except Exception:
+            pass
+
+
+# Service explanation dialog
+def show_service_info(parent: tk.Tk, service_name: str, friendly_name: str) -> bool:
+    """
+   Show a stylized explanation modal and return True if user wants to continue.
+   """
+
+    # Custom modal window
+    modal = tk.Toplevel(parent)
+    modal.transient(parent)
+    modal.grab_set()
+    modal.title(f"{friendly_name} ({service_name})")
+    modal.geometry("520x300")
+    modal.resizable(False, False)
+
+    # Title
+    lbl_title = tk.Label(modal, text=f"{friendly_name}",font=("Segoe UI", 14, "bold"))
+    lbl_title.pack(pady=(12, 8))
+
+    # Explanatory text (tailor per service)
+    explanation = (
+        f"The service '{friendly_name}' (service name: {service_name}) helps Windows optimize app loading and system responsiveness.\n\n"
+        "Notes:\n"
+        "- Formerly known as SuperFetch.\n"
+        "- May improve launch times for frequently used apps.\n"
+        "- On HDDs can cause high disk activity; on SSDs it's usually unnecessary.\n\n"
+        "Do you want to continue and toggle this service?"
+    )
+
+    lbl_text = tk.Label(modal, text=explanation, justify="left", wraplength=480)
+    lbl_text.pack(padx=12, pady=(0, 10), expand=True)
+
+    # Buttons
+    btn_frame = tk.Frame(modal)
+    btn_frame.pack(pady=8)
+
+    result = {"proceed": False}
+
+    def on_continue() -> None:
+        result["proceed"] = True
+        modal.destroy()
+
+    def on_cancel() -> None:
+        result["proceed"] = False
+        modal.destroy()
+
+    btn_yes = tk.Button(btn_frame, text="Continue", bg="#007bff", fg="white", command=on_continue, width=12)
+    btn_yes.pack(side="left", padx=8)
+    btn_no = tk.Button(btn_frame, text="Cancel", command=on_cancel, width=12)
+    btn_no.pack(side="left", padx=8)
+
+    parent_x = parent.winfo_rootx()
+    parent_y = parent.winfo_rooty()
+    patent_w = parent.winfo_width()
+    patent_h = parent.winfo_height()
+
+    # Center Modal
+    modal.update_idletasks()
+    mx = parent_x + (patent_w - 520) // 2
+    my = parent_y + (patent_h - 300) // 2
+    modal.geometry(f"+{mx}+{my}")
+
+    modal.wait_window()
+
+    return result["proceed"]
+
+
+
+
+
+
 
 
 window = Window()
