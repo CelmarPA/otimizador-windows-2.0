@@ -68,8 +68,10 @@ class Window:
         # Create footer
         self.create_footer()
 
+        # print(self.root.winfo_rootx(), self.root.winfo_rooty(), self.root.winfo_width(), self.root.winfo_height())
         # Start the main loop.
         self.root.mainloop()
+
 
     def center_window(self, width: int, height: int) -> None:
         self.root.update_idletasks()
@@ -369,7 +371,7 @@ class Window:
 
     def run_with_overlay(self, title: str, message: str, task: Callable[[], None]) -> None:
 
-        overlay = ProgressOverlay(self.root, title=title, message=message)
+        overlay = ProgressOverlay(self.root, title=title, message=message, slide=False)
 
         def worker():
             try:
@@ -402,14 +404,12 @@ class Window:
     def toggle_service_with_overlay(self, service_name: str, friendly_name: str, description: str) -> None:
         """
         Full flow:
-        - Show explanation modal
-        - Detect current state
-        - Show overlay
-        - Call backend async toggle
-        - Update logs + UI
+        1) show feature info modal
+        2) if user continues -> check state
+        3) show overlay + spinner
+        4) ask backend to toggle (async)
+        5) finish callbacks update logs and UI
         """
-
-        # Explanation
         proceed = show_feature_info(
             self.root,
             title=f"{friendly_name}",
@@ -421,71 +421,72 @@ class Window:
         if not proceed:
             if self.log_panel:
                 self.log_panel.info("User cancelled service operation.")
-
             return
 
-        # Check state quickly
-        status = self.actions._check_service_status(service_name)  # uses backend helper
+        # Check current state
+        status = self.actions._check_service_status(service_name)
 
         if status == "running":
             action = "disable"
             verb = "Disabling"
-
         else:
             action = "enable"
             verb = "Enabling"
 
-        # Overlay
-        overlay = ProgressOverlay(
-            self.root,
-            title=f"{verb} {friendly_name}...",
-            message=f"{verb} {friendly_name}. Please wait."
-        )
-
+        overlay = ProgressOverlay(self.root, title=f"{verb} {friendly_name}...",
+                                  message=f"{verb} {friendly_name}. Please wait.")
         if self.log_panel:
             self.log_panel.info(f"▶️ {verb} {friendly_name}...")
 
-        # Callbacks
-        def on_start() -> None:
-            overlay.update_status(f"{verb}...")
+        def on_start():
+            try:
+                overlay.update_status(f"{verb} ...")
+            except Exception:
+                pass
 
-        def on_finish(success, stderr) -> None:
+        def on_finish(success, stderr):
             try:
                 if success:
                     overlay.update_status("Done!")
-                    time.sleep(0.6)
-                    overlay.close()
-
+                    # let animation settle and close non-blocking
+                    self.root.after(600, overlay.close)
                     if self.log_panel:
                         self.log_panel.success(f"{friendly_name} {action}d successfully.")
-
-                    messagebox.showinfo("Success", f"{friendly_name} updated successfully.")
-
+                    try:
+                        messagebox.showinfo("Success", f"{friendly_name} updated successfully.")
+                    except Exception:
+                        pass
                 else:
                     overlay.update_status("Failed")
-                    time.sleep(0.6)
-                    overlay.close()
+                    self.root.after(600, overlay.close)
                     if self.log_panel:
                         self.log_panel.error(f"{friendly_name} toggle failed: {stderr}")
-
-                    messagebox.showerror("Error", f"Operation failed:\n{stderr}")
-
-
+                    try:
+                        messagebox.showerror("Error", f"Operation failed:\n{stderr}")
+                    except Exception:
+                        pass
             except Exception as e:
-                overlay.close()
-                self.log_panel.error(f"Finish callback exception: {e}")
+                try:
+                    overlay.close()
+                except Exception:
+                    pass
+                if self.log_panel:
+                    self.log_panel.error(f"Finish callback exception: {e}")
 
         def on_error(exc):
-            overlay.update_status("Error")
-            time.sleep(0.5)
-            overlay.close()
-
+            try:
+                overlay.update_status("Error")
+                self.root.after(400, overlay.close)
+            except Exception:
+                pass
             if self.log_panel:
                 self.log_panel.error(f"Exception: {exc}")
+            try:
+                messagebox.showerror("Error", f"Exception: {exc}")
+            except Exception:
+                pass
 
-            messagebox.showerror("Error", f"Exception: {exc}")
-
-        # Run async task from system_actions.py
+        # start async toggle
         self.actions.toggle_service_async(
             service_name=service_name,
             action=action,
@@ -512,199 +513,93 @@ class Window:
 
 
 class ProgressOverlay:
-    def __init__(
-        self,
-        parent: tk.Tk,
-        title: str = "Working...",
-        message: str = "",
-        fade: bool = True,
-        slide: bool = False,
-        slide_from: str = "top",   # 'top' or 'bottom' or 'left' or 'right'
-        duration: int = 300        # animation duration in ms
-    ) -> None:
+    def __init__(self, parent, title="Working...", message="", **_):
         self.parent = parent
-        self.fade = fade
-        self.slide = slide
-        self.duration = max(1, duration)
-        self.start_time = None
 
-        # create a top-level full-screen overlay on top of parent window
         self.win = tk.Toplevel(parent)
         self.win.transient(parent)
-        self.win.overrideredirect(True)  # remove borders
+        self.win.overrideredirect(True)
 
-        # ensure geometry updated
+        self.win.update_idletasks()
         parent.update_idletasks()
+
+        # pega posição absoluta com bordas e título
         px = parent.winfo_rootx()
         py = parent.winfo_rooty()
+
+        # pega tamanho TOTAL EXIBIDO
         pw = parent.winfo_width()
         ph = parent.winfo_height()
 
-        self.parent_geom = (px, py, pw, ph)
+        # AQUI ESTÁ A CORREÇÃO IMPORTANTE:
+        # garantir que a janela já está 100% renderizada
+        self.win.after(10, lambda: self.win.geometry(f"{pw}x{ph}+{px}+{py}"))
 
-        # set initial alpha depending on fade; will animate to target
-        initial_alpha = 0.0 if self.fade else 0.55
+        print(px, py, pw, ph)
 
-        # position - for slide we start slightly offscreen
-        if self.slide:
-            # compute starting geometry depending on direction
-            if slide_from == "top":
-                sx, sy = px, py - ph
-                self.target_geom = (px, py, pw, ph)
-                self.start_geom = (sx, sy, pw, ph)
-            elif slide_from == "bottom":
-                sx, sy = px, py + ph
-                self.target_geom = (px, py, pw, ph)
-                self.start_geom = (sx, sy, pw, ph)
-            elif slide_from == "left":
-                sx, sy = px - pw, py
-                self.target_geom = (px, py, pw, ph)
-                self.start_geom = (sx, sy, pw, ph)
-            else:  # right
-                sx, sy = px + pw, py
-                self.target_geom = (px, py, pw, ph)
-                self.start_geom = (sx, sy, pw, ph)
+        # --- FUMAÇA (overlay escuro semi-transparente) ---
+        self.win.configure(bg="black")
+        self.win.attributes("-alpha", 0.45)  # Transparência real do overlay
 
-            self.win.geometry(f"{self.start_geom[2]}x{self.start_geom[3]}+{self.start_geom[0]}+{self.start_geom[1]}")
-        else:
-            self.win.geometry(f"{pw}x{ph}+{px}+{py}")
+        self.bg = tk.Frame(self.win, bg="black")
+        self.bg.place(relwidth=1, relheight=1)
 
-        # semi-transparent dark background frame (we set alpha on window)
-        self.bg = tk.Frame(self.win, bg="#000000")
-        self.bg.place(relwidth=1.0, relheight=1.0)
-
-        # try to set alpha (may fail on some platforms)
-        try:
-            self.win.attributes("-alpha", initial_alpha)
-        except Exception:
-            pass
-
-        # central card
-        card_w, card_h = 420, 140
+        # --- CARD CENTRAL ---
+        card_w, card_h = 420, 160
         cx = (pw - card_w) // 2
         cy = (ph - card_h) // 2
-        self.card = tk.Frame(self.win, bg="#ffffff", bd=2, relief="raised")
+
+        self.card = tk.Frame(self.win, bg="#e9eaed", bd=2, relief="raised")
+
         self.card.place(x=cx, y=cy, width=card_w, height=card_h)
-        self.win.update_idletasks()
 
-        self.title_lbl = tk.Label(self.card, text=title, font=("Segoe UI", 12, "bold"), bg="#ffffff")
-        self.title_lbl.pack(pady=(12, 6))
+        tk.Label(self.card, text=title, font=("Segoe UI", 12, "bold"), bg="white").pack(pady=(12,6))
 
-        self.msg_lbl = tk.Label(self.card, text=message, font=("Segoe UI", 10), bg="#ffffff", wraplength=380,
-                                justify="center")
-        self.msg_lbl.pack(pady=(0, 8))
 
-        # Spinner animated
-        self.spinner = Spinner(self.card, size=64)
-        self.spinner.pack(pady=(6, 4))
+        # --- SPINNER ---
+        self.spinner = Spinner(self.card, folder="images/spinner", size=64)
+        self.spinner.pack(pady=(6,4))
 
-        # Status
-        self.status_lbl = tk.Label(self.card, text="Starting...", font=("Segoe UI", 9), bg="#ffffff")
+        self.status_lbl = tk.Label(self.card, text="Starting...", bg="white")
         self.status_lbl.pack()
 
-        # prevent close
-        self.win.protocol("WM_DELETE_WINDOW", lambda: None)
+        # Camadas corretas
+        self.bg.lower()
+        self.card.lift()
+        self.spinner.lift()
+        self.win.lift()
+        self.win.attributes("-topmost", True)
+        self.win.after(20, lambda: self.win.attributes("-topmost", False))
 
-        # Animation control
-        self._anim_steps = max(6, int(self.duration / 15))  # number of animation frames
-        self._current_step = 0
+        # Garantir centralização mesmo após update
+        self.win.after(10, self.center_card)
 
-        # Start entrance animation
-        self._animating_in = True
-        self._animating_out = False
-        self._animate_in()
+    def center_card(self):
+        self.parent.update_idletasks()
 
-    def _interpolate(self, start, end, t: float):
-        return int(start + (end - start) * t)
+        pw = self.parent.winfo_width()
+        ph = self.parent.winfo_height()
 
-    def _animate_in(self):
-        """Animate fade/slide in."""
-        try:
-            t = self._current_step / (self._anim_steps - 1)
-        except ZeroDivisionError:
-            t = 1.0
+        card_w = 420
+        card_h = 160
 
-        # Fade
-        if self.fade:
-            try:
-                # alpha from 0.0 -> 0.55
-                alpha = 0.0 + (0.55 * t)
-                self.win.attributes("-alpha", alpha)
-            except Exception:
-                pass
+        cx = (pw - card_w) // 2
+        cy = (ph - card_h) // 2
 
-        # Slide
-        if self.slide:
-            sx, sy, sw, sh = self.start_geom
-            tx, ty, tw, th = self.target_geom
-            nx = self._interpolate(sx, tx, t)
-            ny = self._interpolate(sy, ty, t)
-            self.win.geometry(f"{tw}x{th}+{nx}+{ny}")
+        self.card.place(x=cx, y=cy, width=card_w, height=card_h)
 
-        self._current_step += 1
-        if self._current_step < self._anim_steps:
-            # schedule next frame
-            self.win.after(int(self.duration / self._anim_steps), self._animate_in)
-        else:
-            # finished
-            self._animating_in = False
-            try:
-                self.win.attributes("-alpha", 0.55)
-            except Exception:
-                pass
 
-    def update_status(self, text: str) -> None:
+    def update_status(self, text: str):
         self.status_lbl.config(text=text)
         self.win.update_idletasks()
 
-    def close(self, fade_out: bool = True):
-        """Close overlay with optional fade/slide out animation."""
-        if fade_out:
-            self._animating_out = True
-            self._current_step = 0
-            self._animate_out()
-        else:
-            try:
-                pass
-            except Exception:
-                pass
-            try:
-                self.win.destroy()
-            except Exception:
-                pass
-
-    def _animate_out(self):
+    def close(self):
+        """Fecha o overlay com segurança."""
         try:
-            t = self._current_step / (self._anim_steps - 1)
-        except ZeroDivisionError:
-            t = 1.0
-
-        # Fade out: alpha 0.55 -> 0.0
-        if self.fade:
-            try:
-                alpha = 0.55 * (1.0 - t)
-                self.win.attributes("-alpha", alpha)
-            except Exception:
-                pass
-
-        # Slide out
-        if self.slide:
-            sx, sy, sw, sh = self.start_geom
-            tx, ty, tw, th = self.target_geom
-            # reverse interpolation (target -> offscreen)
-            nx = self._interpolate(tx, sx, t)
-            ny = self._interpolate(ty, sy, t)
-            self.win.geometry(f"{tw}x{th}+{nx}+{ny}")
-
-        self._current_step += 1
-        if self._current_step < self._anim_steps:
-            self.win.after(int(self.duration / self._anim_steps), self._animate_out)
-        else:
-            try:
+            if self.win and self.win.winfo_exists():
                 self.win.destroy()
-            except Exception:
-                pass
-
+        except Exception as e:
+            print(f"Erro ao fechar overlay: {e}")
 
 
 # Service explanation dialog
@@ -713,8 +608,6 @@ def show_feature_info(parent: tk.Tk, title: str, description: str, risk: str = "
     Universal info window for any feature, service or optimization action.
     Returns True if user clicks Continue.
     """
-
-    # Custom modal window
     modal = tk.Toplevel(parent)
     modal.transient(parent)
     modal.grab_set()
@@ -722,19 +615,15 @@ def show_feature_info(parent: tk.Tk, title: str, description: str, risk: str = "
     modal.geometry("520x330")
     modal.resizable(False, False)
 
-    # Title
-    lbl_title = tk.Label(modal, text=title,font=("Segoe UI", 14, "bold"))
+    lbl_title = tk.Label(modal, text=title, font=("Segoe UI", 14, "bold"))
     lbl_title.pack(pady=(12, 4))
 
-    # Category + Risk line
     lbl_meta = tk.Label(modal, text=f"Category: {category}    •    Risk: {risk}", font=("Segoe UI", 9, "italic"), fg="#666666")
     lbl_meta.pack()
 
-    # Main description
     lbl_text = tk.Label(modal, text=description, justify="left", wraplength=480, font=("Segoe UI", 10))
     lbl_text.pack(padx=12, pady=(12, 10), expand=True)
 
-    # Buttons
     btn_frame = tk.Frame(modal)
     btn_frame.pack(pady=8)
 
@@ -753,15 +642,15 @@ def show_feature_info(parent: tk.Tk, title: str, description: str, risk: str = "
     btn_no = tk.Button(btn_frame, text="Cancel", command=on_cancel, width=12)
     btn_no.pack(side="left", padx=8)
 
+    # Center the modal over parent and wait (modal)
+    parent.update_idletasks()            # one-time geometry update to compute center
     parent_x = parent.winfo_rootx()
     parent_y = parent.winfo_rooty()
-    patent_w = parent.winfo_width()
-    patent_h = parent.winfo_height()
-
-    # Center Modal
+    parent_w = parent.winfo_width()
+    parent_h = parent.winfo_height()
     modal.update_idletasks()
-    mx = parent_x + (patent_w - 520) // 2
-    my = parent_y + (patent_h - 300) // 2
+    mx = parent_x + (parent_w - 520) // 2
+    my = parent_y + (parent_h - 330) // 2
     modal.geometry(f"+{mx}+{my}")
 
     modal.wait_window()
@@ -769,48 +658,76 @@ def show_feature_info(parent: tk.Tk, title: str, description: str, risk: str = "
     return result["proceed"]
 
 
+
 class Spinner(tk.Label):
-    def __init__(self, parent, folder="images/spinner", delay=80, size=64):
-        super().__init__(parent, bg="white")
+    """
+    Spinner profissional usando 12 PNGs individuais.
+    Os arquivos devem estar em: images/spinner/frame_0.png ... frame_11.png
+    """
+
+    def __init__(self, parent, folder="images/spinner", delay=80, size=64, debug=False):
+        super().__init__(parent)
+  # card fundo branco
 
         self.delay = delay
         self.frames = []
         self.index = 0
+        self.debug = debug
 
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        folder_path = os.path.join(base_dir, folder)
+        # Verifica pasta
+        import os
+        if not os.path.exists(folder):
+            raise FileNotFoundError(f"Pasta do spinner não encontrada: {folder}")
 
+        # Carrega frames
         for i in range(12):
-            path = os.path.join(folder_path, f"frame_{i}.png")
+            path = f"{folder}/frame_{i}.png"
+
+            if not os.path.exists(path):
+                raise FileNotFoundError(f"Frame não encontrado: {path}")
 
             img = Image.open(path).convert("RGBA")
-            datas = img.getdata()
-
-            # Remove background branco
-            new_data = []
-            for item in datas:
-                if item[0] > 240 and item[1] > 240 and item[2] > 240:
-                    new_data.append((255, 255, 255, 0))  # transparente
-                else:
-                    new_data.append(item)
-
-            img.putdata(new_data)
             img = img.resize((size, size), Image.LANCZOS)
+
+            # Torna o spinner visível — recolore para cinza escuro
+            pixels = img.load()
+            for x in range(img.width):
+                for y in range(img.height):
+                    r, g, b, a = pixels[x, y]
+                    # só afeta pixels visíveis
+                    if a > 0:
+                        # cinza escuro
+                        pixels[x, y] = (60, 60, 60, a)
 
             self.frames.append(ImageTk.PhotoImage(img))
 
-        self.animate()
-
-    def animate(self):
-        self.config(image=self.frames[self.index])
-        self.index = (self.index + 1) % len(self.frames)
+        # Inicia animação
         self.after(self.delay, self.animate)
 
+        self.after_id = None
 
+        if self.debug:
+            print(f"[Spinner] {len(self.frames)} frames carregados de '{folder}'")
 
+    def animate(self):
+        """Animação contínua."""
+        if not self.frames:
+            return
 
+        # SE O WIDGET FOI DESTRUÍDO → PARE
+        if not self.winfo_exists():
+            return
 
+        try:
+            self.config(image=self.frames[self.index])
+            self.index = (self.index + 1) % len(self.frames)
 
+            # GUARDA O ID DO AFTER
+            self.after_id = self.after(self.delay, self.animate)
+
+        except tk.TclError:
+            # widget destruído durante animação
+            return
 
 
 window = Window()
