@@ -8,6 +8,34 @@ from datetime import datetime
 from performance_tester import PerformanceTester
 
 
+SERVICE_INFO = {
+    "SysMain": {
+        "friendly": "SysMain / SuperFetch",
+        "description": "Improves app launch times... (SSD/HDD notes)."
+    },
+    "WSearch": {
+        "friendly": "Windows Search",
+        "description": "Indexes files and emails. Disabling speeds up HDD PCs but makes search slower."
+    },
+    "DiagTrack": {
+        "friendly": "Telemetry Service",
+        "description": "Collects diagnostic telemetry. Disabling improves privacy."
+    },
+    "wuauserv": {
+        "friendly": "Windows Update",
+        "description": "Handles Windows Updates. Disabling prevents updates from being downloaded."
+    },
+    "bits": {
+        "friendly": "Background Intelligent Transfer Service",
+        "description": "Transfers data in background. Required for Windows Update."
+    },
+    "spooler": {
+        "friendly": "Print Spooler",
+        "description": "Controls printing operations. Disable if you never use a printer."
+    }
+}
+
+
 def _timestamp() -> str:
     return datetime.now().strftime("%H:%M:%S")
 
@@ -85,7 +113,8 @@ class SystemActions:
                 if on_start:
                     try:
                         on_start()
-                    except Exception:
+                    except Exception as e:
+                        print(e)
                         pass
 
                 # Build command

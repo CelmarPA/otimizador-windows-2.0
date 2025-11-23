@@ -1,11 +1,14 @@
+import os
+import threading
 import time
 from tkinter import ttk
 from tkinter import messagebox
 from PIL import Image, ImageTk, ImageDraw
 import tkinter as tk
 import webbrowser
-from system_actions import SystemActions
+from system_actions import SystemActions, SERVICE_INFO
 from log_panel import LogPanel
+from typing import Callable
 
 
 class Window:
@@ -97,6 +100,7 @@ class Window:
         )
         title_label.pack(fill=tk.X, pady=(10, 5))
 
+    # List of buttons: (Button text, function called)
     def create_buttons(self) -> None:
         """
         It creates the main menu buttons and arranges them vertically.
@@ -104,27 +108,125 @@ class Window:
         :return: None
         """
 
-        # List of buttons: (Button text, function called)
         buttons = [
-            ("PC Performance Test", self.actions.pc_performance_test, "#ff6b6b"),  # Red
-            ("Create Restore Point", self.actions.create_restore_point, "#34495e"), # Dark gray
-            ("Enable / Disable SysMain", lambda: self.toggle_service_with_overlay("SysMain", "SysMain / SuperFetch"), "#f5a623"),  # Orange
-            ("Clean Temporary Files", self.actions.clean_temporary_files, "#32cd32"),  # Green
-            ("Deep Cleaning", self.actions.start_cleanup, "#4b0082"),  # Green
-            ("Enable High Performance Power Plan", self.actions.enable_high_power_plan, "#007bff"),  # Blue
-            ("Disable Background Apps", self.actions.disable_background_apps, "#8e44ad"),  # Purple
-            ("Complete Optimization", self.actions.complete_optimization, "#2c3e50"),  # Navy gray
-            ("Update All Software", self.actions.update_software, "#009688"),  # Cyan
-            ("Enable / Disable Windows Update", lambda: self.toggle_service_with_overlay("wuauserv", "Windows Update Service"), "#2980b9"),
-            ("Enable / Disable BITS", lambda: self.toggle_service_with_overlay("bits", "Background Intelligent Transfer Service"), "#9b59b6"),
-            ("Enable / Disable Print Spooler", lambda: self.toggle_service_with_overlay("spooler", "Print Spooler"), "#e67e22"),
-            ("Enable / Disable Windows Search", lambda: self.toggle_service_with_overlay("wsearch", "Windows Search Indexing"), "#16a085"),
-            ("Windows / Office Activator / Repair", self.actions.massgrave_activator, "#34495e")  # Dark gray
+
+            ("PC Performance Test",
+             lambda: self.run_with_overlay(
+                 "Running Performance Test",
+                 "Benchmarking CPU, RAM, Disk and GPU...",
+                 self.actions.pc_performance_test
+             ),
+             "#ff6b6b"),
+
+            ("Create Restore Point",
+             lambda: self.run_with_overlay(
+                 "Creating Restore Point",
+                 "Windows is creating a safe system snapshot...",
+                 self.actions.create_restore_point
+             ),
+             "#34495e"),
+
+            ("Enable / Disable SysMain",
+             lambda: self.toggle_service_with_overlay(
+                 "SysMain",
+                 "SysMain / SuperFetch",
+                 "Manages performance optimization and app preloading."
+             ),
+             "#f5a623"),
+
+            ("Clean Temporary Files",
+             lambda: self.run_with_overlay(
+                 "Cleaning Temporary Files",
+                 "Removing temporary files…",
+                 self.actions.clean_temporary_files
+             ),
+             "#32cd32"),
+
+            ("Deep Cleaning",
+             lambda: self.run_with_overlay(
+                 "Deep System Cleanup",
+                 "Cleaning WinSxS, Delivery Optimization, Logs, Updates…",
+                 self.actions.deep_system_cleanup
+             ),
+             "#4b0082"),
+
+            ("Enable High Performance Power Plan",
+             lambda: self.run_with_overlay(
+                 "Enabling High Performance Mode",
+                 "Applying best-performance power settings…",
+                 self.actions.enable_high_power_plan
+             ),
+             "#007bff"),
+
+            ("Disable Background Apps",
+             lambda: self.run_with_overlay(
+                 "Disabling Background Apps",
+                 "Blocking unnecessary app background activity…",
+                 self.actions.disable_background_apps
+             ),
+             "#8e44ad"),
+
+            ("Complete Optimization",
+             lambda: self.run_with_overlay(
+                 "Running Complete Optimization",
+                 "Applying full system performance improvements…",
+                 self.actions.complete_optimization
+             ),
+             "#2c3e50"),
+
+            ("Update All Software",
+             lambda: self.run_with_overlay(
+                 "Updating Software",
+                 "Checking and updating all installed applications…",
+                 self.actions.update_software
+             ),
+             "#009688"),
+
+            # Windows Services
+            ("Windows Update Service",
+             lambda: self.toggle_service_with_overlay(
+                 "wuauserv",
+                 "Windows Update Service",
+                 "Handles system update download and installation."
+             ),
+             "#2980b9"),
+
+            ("BITS Service",
+             lambda: self.toggle_service_with_overlay(
+                 "bits",
+                 "Background Intelligent Transfer Service",
+                 "Transfers files in background for Windows Update and apps."
+             ),
+             "#9b59b6"),
+
+            ("Print Spooler",
+             lambda: self.toggle_service_with_overlay(
+                 "spooler",
+                 "Print Spooler",
+                 "Manages print queue and printer communication."
+             ),
+             "#e67e22"),
+
+            ("Windows Search",
+             lambda: self.toggle_service_with_overlay(
+                 "WSearch",
+                 "Windows Search Indexing",
+                 "Indexes files to speed up search results."
+             ),
+             "#0099dd"),
+
+            ("Telemetry (DiagTrack)",
+             lambda: self.toggle_service_with_overlay(
+                 "DiagTrack",
+                 "Windows Telemetry",
+                 "Collects diagnostics data for service improvement."
+             ),
+             "#aa44dd"),
         ]
 
-        # Loop to create and add each button
+        # Creation loop
         for text, command, color in buttons:
-            button = tk.Button(
+            btn = tk.Button(
                 self.button_frame,
                 text=text,
                 command=command,
@@ -136,10 +238,10 @@ class Window:
                 activeforeground="white",
                 cursor="hand2"
             )
-            button.original_bg = color
-            button.bind("<Enter>", self.on_enter)
-            button.bind("<Leave>", self.on_leave)
-            button.pack(pady=8, fill=tk.X)
+            btn.original_bg = color
+            btn.bind("<Enter>", self.on_enter)
+            btn.bind("<Leave>", self.on_leave)
+            btn.pack(pady=8, fill=tk.X)
 
     def create_footer(self) -> None:
         """
@@ -248,12 +350,56 @@ class Window:
 
         return "#%02x%02x%02x" % darker_rgb
 
-    def run_action(self, func, label):
-        func()
+    def run_feature_with_info(self, action: Callable[[], None], title: str, description: str, category: str, risk: str) -> None:
+        proceed = show_feature_info(
+            self.root,
+            title=title,
+            description=description,
+            category=category,
+            risk=risk,
+        )
+
+        if not proceed:
+            if self.log_panel:
+                self.log_panel.info("User cancelled operation.")
+
+            return
+
+        action()
+
+    def run_with_overlay(self, title: str, message: str, task: Callable[[], None]) -> None:
+
+        overlay = ProgressOverlay(self.root, title=title, message=message)
+
+        def worker():
+            try:
+                if hasattr(self, "log_panel"):
+                    self.log_panel.info(f"▶️ {title}")
+
+                task()
+
+                overlay.update_status("Done")
+                time.sleep(0.6)
+                overlay.close()
+
+                if hasattr(self, "log_panel"):
+                    self.log_panel.success(f"{title} completed successfully.")
+            except Exception as e:
+                overlay.update_status("Error")
+                time.sleep(0.6)
+                overlay.close()
+
+                if hasattr(self, "log_panel"):
+                    self.log_panel.error(f"{title} failed: {e}")
+
+                messagebox.showerror("Error", f"Operation failed:\n{e}")
+
+        threading.Thread(target=worker, daemon=True).start()
+
 
     # Integration helper in main window class
     # Inside your Window class (or wherever you create buttons), add a method like this:
-    def toggle_service_with_overlay(self, service_name: str, friendly_name: str) -> None:
+    def toggle_service_with_overlay(self, service_name: str, friendly_name: str, description: str) -> None:
         """
         Full flow:
         - Show explanation modal
@@ -264,7 +410,13 @@ class Window:
         """
 
         # Explanation
-        proceed = show_service_info(self.root, service_name, friendly_name)
+        proceed = show_feature_info(
+            self.root,
+            title=f"{friendly_name}",
+            description=description,
+            category="Windows Service",
+            risk="Low"
+        )
 
         if not proceed:
             if self.log_panel:
@@ -342,36 +494,89 @@ class Window:
             on_error=on_error
         )
 
+    def toggle_any_service(self, service_name: str) -> None:
+        info = SERVICE_INFO.get(service_name)
+
+        if not info:
+            self.log_panel.error(f"Service not registered: {service_name}")
+            return
+
+        friendly = info["friendly"]
+        description = info["description"]
+
+        self.toggle_service_with_overlay(
+            service_name,
+            friendly,
+            description
+        )
+
 
 class ProgressOverlay:
-
-    def __init__(self,  parent: tk.Tk, title: str = "Working...", message: str = "") -> None:
+    def __init__(
+        self,
+        parent: tk.Tk,
+        title: str = "Working...",
+        message: str = "",
+        fade: bool = True,
+        slide: bool = False,
+        slide_from: str = "top",   # 'top' or 'bottom' or 'left' or 'right'
+        duration: int = 300        # animation duration in ms
+    ) -> None:
         self.parent = parent
+        self.fade = fade
+        self.slide = slide
+        self.duration = max(1, duration)
+        self.start_time = None
 
         # create a top-level full-screen overlay on top of parent window
         self.win = tk.Toplevel(parent)
         self.win.transient(parent)
         self.win.overrideredirect(True)  # remove borders
 
-        # make it cover the parent window exactly
+        # ensure geometry updated
+        parent.update_idletasks()
         px = parent.winfo_rootx()
         py = parent.winfo_rooty()
         pw = parent.winfo_width()
         ph = parent.winfo_height()
 
-        # ensure geometry updated
-        parent.update_idletasks()
-        self.win.geometry(f"{pw}x{ph}+{px}+{py}")
+        self.parent_geom = (px, py, pw, ph)
 
-        # semi-transparent dark background
+        # set initial alpha depending on fade; will animate to target
+        initial_alpha = 0.0 if self.fade else 0.55
+
+        # position - for slide we start slightly offscreen
+        if self.slide:
+            # compute starting geometry depending on direction
+            if slide_from == "top":
+                sx, sy = px, py - ph
+                self.target_geom = (px, py, pw, ph)
+                self.start_geom = (sx, sy, pw, ph)
+            elif slide_from == "bottom":
+                sx, sy = px, py + ph
+                self.target_geom = (px, py, pw, ph)
+                self.start_geom = (sx, sy, pw, ph)
+            elif slide_from == "left":
+                sx, sy = px - pw, py
+                self.target_geom = (px, py, pw, ph)
+                self.start_geom = (sx, sy, pw, ph)
+            else:  # right
+                sx, sy = px + pw, py
+                self.target_geom = (px, py, pw, ph)
+                self.start_geom = (sx, sy, pw, ph)
+
+            self.win.geometry(f"{self.start_geom[2]}x{self.start_geom[3]}+{self.start_geom[0]}+{self.start_geom[1]}")
+        else:
+            self.win.geometry(f"{pw}x{ph}+{px}+{py}")
+
+        # semi-transparent dark background frame (we set alpha on window)
         self.bg = tk.Frame(self.win, bg="#000000")
         self.bg.place(relwidth=1.0, relheight=1.0)
 
+        # try to set alpha (may fail on some platforms)
         try:
-            self.win.attributes("-alpha", 0.55)
-
+            self.win.attributes("-alpha", initial_alpha)
         except Exception:
-            # some platforms may not accept alpha on Toplevel
             pass
 
         # central card
@@ -380,6 +585,7 @@ class ProgressOverlay:
         cy = (ph - card_h) // 2
         self.card = tk.Frame(self.win, bg="#ffffff", bd=2, relief="raised")
         self.card.place(x=cx, y=cy, width=card_w, height=card_h)
+        self.win.update_idletasks()
 
         self.title_lbl = tk.Label(self.card, text=title, font=("Segoe UI", 12, "bold"), bg="#ffffff")
         self.title_lbl.pack(pady=(12, 6))
@@ -388,66 +594,145 @@ class ProgressOverlay:
                                 justify="center")
         self.msg_lbl.pack(pady=(0, 8))
 
-        # Progress bar
-        self.pb = ttk.Progressbar(self.card, mode="indeterminate", length=320)
-        self.pb.pack(pady=(4, 8))
-        self.pb.start()
+        # Spinner animated
+        self.spinner = Spinner(self.card, size=64)
+        self.spinner.pack(pady=(6, 4))
 
         # Status
         self.status_lbl = tk.Label(self.card, text="Starting...", font=("Segoe UI", 9), bg="#ffffff")
         self.status_lbl.pack()
 
-        # Allow manual close? no, hide window close
+        # prevent close
         self.win.protocol("WM_DELETE_WINDOW", lambda: None)
+
+        # Animation control
+        self._anim_steps = max(6, int(self.duration / 15))  # number of animation frames
+        self._current_step = 0
+
+        # Start entrance animation
+        self._animating_in = True
+        self._animating_out = False
+        self._animate_in()
+
+    def _interpolate(self, start, end, t: float):
+        return int(start + (end - start) * t)
+
+    def _animate_in(self):
+        """Animate fade/slide in."""
+        try:
+            t = self._current_step / (self._anim_steps - 1)
+        except ZeroDivisionError:
+            t = 1.0
+
+        # Fade
+        if self.fade:
+            try:
+                # alpha from 0.0 -> 0.55
+                alpha = 0.0 + (0.55 * t)
+                self.win.attributes("-alpha", alpha)
+            except Exception:
+                pass
+
+        # Slide
+        if self.slide:
+            sx, sy, sw, sh = self.start_geom
+            tx, ty, tw, th = self.target_geom
+            nx = self._interpolate(sx, tx, t)
+            ny = self._interpolate(sy, ty, t)
+            self.win.geometry(f"{tw}x{th}+{nx}+{ny}")
+
+        self._current_step += 1
+        if self._current_step < self._anim_steps:
+            # schedule next frame
+            self.win.after(int(self.duration / self._anim_steps), self._animate_in)
+        else:
+            # finished
+            self._animating_in = False
+            try:
+                self.win.attributes("-alpha", 0.55)
+            except Exception:
+                pass
 
     def update_status(self, text: str) -> None:
         self.status_lbl.config(text=text)
-
-        # Ensure new text is visible
         self.win.update_idletasks()
 
-    def close(self):
-        try:
-            self.pb.stop()
-        except Exception:
-            pass
+    def close(self, fade_out: bool = True):
+        """Close overlay with optional fade/slide out animation."""
+        if fade_out:
+            self._animating_out = True
+            self._current_step = 0
+            self._animate_out()
+        else:
+            try:
+                pass
+            except Exception:
+                pass
+            try:
+                self.win.destroy()
+            except Exception:
+                pass
 
+    def _animate_out(self):
         try:
-            self.win.destroy()
-        except Exception:
-            pass
+            t = self._current_step / (self._anim_steps - 1)
+        except ZeroDivisionError:
+            t = 1.0
+
+        # Fade out: alpha 0.55 -> 0.0
+        if self.fade:
+            try:
+                alpha = 0.55 * (1.0 - t)
+                self.win.attributes("-alpha", alpha)
+            except Exception:
+                pass
+
+        # Slide out
+        if self.slide:
+            sx, sy, sw, sh = self.start_geom
+            tx, ty, tw, th = self.target_geom
+            # reverse interpolation (target -> offscreen)
+            nx = self._interpolate(tx, sx, t)
+            ny = self._interpolate(ty, sy, t)
+            self.win.geometry(f"{tw}x{th}+{nx}+{ny}")
+
+        self._current_step += 1
+        if self._current_step < self._anim_steps:
+            self.win.after(int(self.duration / self._anim_steps), self._animate_out)
+        else:
+            try:
+                self.win.destroy()
+            except Exception:
+                pass
+
 
 
 # Service explanation dialog
-def show_service_info(parent: tk.Tk, service_name: str, friendly_name: str) -> bool:
+def show_feature_info(parent: tk.Tk, title: str, description: str, risk: str = "Low", category: str = "General") -> bool:
     """
-   Show a stylized explanation modal and return True if user wants to continue.
-   """
+    Universal info window for any feature, service or optimization action.
+    Returns True if user clicks Continue.
+    """
 
     # Custom modal window
     modal = tk.Toplevel(parent)
     modal.transient(parent)
     modal.grab_set()
-    modal.title(f"{friendly_name} ({service_name})")
-    modal.geometry("520x300")
+    modal.title(title)
+    modal.geometry("520x330")
     modal.resizable(False, False)
 
     # Title
-    lbl_title = tk.Label(modal, text=f"{friendly_name}",font=("Segoe UI", 14, "bold"))
-    lbl_title.pack(pady=(12, 8))
+    lbl_title = tk.Label(modal, text=title,font=("Segoe UI", 14, "bold"))
+    lbl_title.pack(pady=(12, 4))
 
-    # Explanatory text (tailor per service)
-    explanation = (
-        f"The service '{friendly_name}' (service name: {service_name}) helps Windows optimize app loading and system responsiveness.\n\n"
-        "Notes:\n"
-        "- Formerly known as SuperFetch.\n"
-        "- May improve launch times for frequently used apps.\n"
-        "- On HDDs can cause high disk activity; on SSDs it's usually unnecessary.\n\n"
-        "Do you want to continue and toggle this service?"
-    )
+    # Category + Risk line
+    lbl_meta = tk.Label(modal, text=f"Category: {category}    •    Risk: {risk}", font=("Segoe UI", 9, "italic"), fg="#666666")
+    lbl_meta.pack()
 
-    lbl_text = tk.Label(modal, text=explanation, justify="left", wraplength=480)
-    lbl_text.pack(padx=12, pady=(0, 10), expand=True)
+    # Main description
+    lbl_text = tk.Label(modal, text=description, justify="left", wraplength=480, font=("Segoe UI", 10))
+    lbl_text.pack(padx=12, pady=(12, 10), expand=True)
 
     # Buttons
     btn_frame = tk.Frame(modal)
@@ -482,6 +767,44 @@ def show_service_info(parent: tk.Tk, service_name: str, friendly_name: str) -> b
     modal.wait_window()
 
     return result["proceed"]
+
+
+class Spinner(tk.Label):
+    def __init__(self, parent, folder="images/spinner", delay=80, size=64):
+        super().__init__(parent, bg="white")
+
+        self.delay = delay
+        self.frames = []
+        self.index = 0
+
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        folder_path = os.path.join(base_dir, folder)
+
+        for i in range(12):
+            path = os.path.join(folder_path, f"frame_{i}.png")
+
+            img = Image.open(path).convert("RGBA")
+            datas = img.getdata()
+
+            # Remove background branco
+            new_data = []
+            for item in datas:
+                if item[0] > 240 and item[1] > 240 and item[2] > 240:
+                    new_data.append((255, 255, 255, 0))  # transparente
+                else:
+                    new_data.append(item)
+
+            img.putdata(new_data)
+            img = img.resize((size, size), Image.LANCZOS)
+
+            self.frames.append(ImageTk.PhotoImage(img))
+
+        self.animate()
+
+    def animate(self):
+        self.config(image=self.frames[self.index])
+        self.index = (self.index + 1) % len(self.frames)
+        self.after(self.delay, self.animate)
 
 
 
